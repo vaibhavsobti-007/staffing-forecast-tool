@@ -1,0 +1,1231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Staffing Forecast</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #1a1d27; --card: #22263a;
+    --border: #2e3350; --accent: #6366f1; --accent2: #10b981;
+    --warn: #f59e0b; --danger: #ef4444;
+    --text: #e8eaf6; --muted: #7c84a8; --mono: 'JetBrains Mono', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; display: flex; flex-direction: column; }
+
+  /* ── TOP BAR ── */
+  .topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 24px; background: var(--panel); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .topbar-logo { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 700; }
+  .topbar-logo svg { width: 28px; height: 28px; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent2); box-shadow: 0 0 6px var(--accent2); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:.4} }
+  .status-label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+
+  /* ── MAIN LAYOUT ── */
+  .main { display: flex; flex: 1; overflow: hidden; height: calc(100vh - 57px); }
+
+  /* ── LEFT PANEL: Forecast ── */
+  .forecast-panel { width: 480px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); overflow: hidden; }
+  .forecast-chat { flex: 1; overflow-y: auto; padding: 20px 16px; display: flex; flex-direction: column; gap: 16px; }
+
+  /* ── RIGHT PANEL: What-if Chat ── */
+  .whatif-panel { flex: 1; display: flex; flex-direction: column; background: var(--bg); overflow: hidden; }
+  .whatif-header { padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+  .whatif-header h2 { font-size: 14px; font-weight: 600; color: var(--text); }
+  .whatif-header p  { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px; background: rgba(99,102,241,.15); border: 1px solid rgba(99,102,241,.3); font-size: 11px; color: #a5b4fc; }
+  .whatif-msgs { flex: 1; overflow-y: auto; padding: 20px 20px; display: flex; flex-direction: column; gap: 14px; }
+  .whatif-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--muted); text-align: center; padding: 40px; }
+  .whatif-empty h3 { font-size: 16px; color: var(--text); }
+  .whatif-empty p { font-size: 13px; line-height: 1.6; max-width: 380px; }
+  .suggestion-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; }
+  .suggestion-chip { padding: 6px 14px; border-radius: 999px; background: var(--card); border: 1px solid var(--border); font-size: 12px; color: var(--muted); cursor: pointer; transition: all .15s; }
+  .suggestion-chip:hover { border-color: var(--accent); color: var(--text); background: rgba(99,102,241,.1); }
+  .whatif-input-row { padding: 16px 20px; background: var(--panel); border-top: 1px solid var(--border); display: flex; gap: 10px; flex-shrink: 0; }
+  .whatif-input { flex: 1; background: var(--card); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 10px 14px; font-size: 14px; resize: none; height: 42px; line-height: 1.4; transition: border-color .15s; }
+  .whatif-input:focus { outline: none; border-color: var(--accent); }
+  .whatif-input:disabled { opacity: .4; cursor: not-allowed; }
+  .whatif-send { width: 42px; height: 42px; border-radius: 10px; background: var(--accent); border: none; color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: opacity .15s; }
+  .whatif-send:disabled { opacity: .3; cursor: not-allowed; }
+  .whatif-locked { padding: 10px 14px; font-size: 13px; color: var(--muted); background: rgba(99,102,241,.05); border: 1px dashed rgba(99,102,241,.2); border-radius: 10px; text-align: center; }
+
+  /* ── CHAT BUBBLES (shared) ── */
+  .msg { display: flex; gap: 10px; align-items: flex-start; }
+  .msg.user { flex-direction: row-reverse; }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
+  .avatar.bot { background: linear-gradient(135deg,#6366f1,#8b5cf6); }
+  .avatar.user { background: var(--card); border: 1px solid var(--border); }
+  .bubble { max-width: 92%; padding: 12px 16px; border-radius: 14px; font-size: 13.5px; line-height: 1.65; }
+  .bubble.bot { background: var(--panel); border: 1px solid var(--border); border-top-left-radius: 4px; }
+  .bubble.user { background: var(--accent); color: white; border-top-right-radius: 4px; }
+  .bubble p { margin-bottom: 8px; }
+  .bubble p:last-child { margin-bottom: 0; }
+  .bubble table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 8px 0; }
+  .bubble table th { background: rgba(99,102,241,.15); padding: 5px 8px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: #a5b4fc; }
+  .bubble table td { padding: 5px 8px; border-bottom: 1px solid var(--border); }
+  .bubble table tr:last-child td { border-bottom: none; }
+  .bubble table tr.total td { font-weight: 700; color: var(--accent2); }
+  .bubble table tr.neg td { color: var(--danger); }
+  .bubble code { font-family: var(--mono); font-size: 12px; background: rgba(0,0,0,.3); padding: 2px 5px; border-radius: 4px; }
+  .bubble .highlight { color: var(--accent2); font-weight: 600; }
+  .bubble .warn { color: var(--warn); }
+  .bubble .danger { color: var(--danger); }
+  .thinking { display: flex; gap: 4px; align-items: center; padding: 4px 0; }
+  .thinking span { width: 6px; height: 6px; background: var(--muted); border-radius: 50%; animation: blink 1.2s infinite; }
+  .thinking span:nth-child(2) { animation-delay: .2s; }
+  .thinking span:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%,100%{opacity:.2}50%{opacity:1} }
+
+  /* ── UPLOAD CARDS ── */
+  .upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 4px 0; }
+  .upload-card { position: relative; border: 1.5px dashed var(--border); border-radius: 12px; padding: 16px 12px 12px; text-align: center; cursor: pointer; transition: all .2s; overflow: hidden; background: var(--card); min-height: 110px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
+  .upload-card input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+  .upload-card:hover { border-color: var(--accent); background: rgba(99,102,241,.07); }
+  .upload-card.filled { border-color: var(--accent2); border-style: solid; background: rgba(16,185,129,.07); }
+  .card-icon { font-size: 24px; pointer-events: none; }
+  .card-label { font-size: 11px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); pointer-events: none; }
+  .card-hint { font-size: 10.5px; color: #4a5180; pointer-events: none; }
+  .card-filename { font-size: 10.5px; color: var(--accent2); font-family: var(--mono); margin-top: 2px; pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
+
+  /* ── WEBHOOK URL ROW ── */
+  .url-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .url-row input { flex: 1; background: var(--card); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 7px 10px; font-size: 12px; font-family: var(--mono); }
+  .url-row input:focus { outline: none; border-color: var(--accent); }
+
+  /* ── RUN BUTTON ── */
+  .run-btn { width: 100%; padding: 12px; border-radius: 12px; background: linear-gradient(135deg,#6366f1,#8b5cf6); border: none; color: white; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 8px; transition: opacity .15s; }
+  .run-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+  /* ── PROGRESS STEPS ── */
+  .progress-steps { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .step { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); padding: 3px 0; }
+  .step.active { color: var(--text); }
+  .step.done { color: var(--accent2); }
+  .step.error { color: var(--danger); }
+  .step-icon { width: 16px; text-align: center; flex-shrink: 0; }
+
+  /* ── SPINNER ── */
+  .spinner { width: 14px; height: 14px; border: 2px solid rgba(99,102,241,.3); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── ERROR / DOWNLOAD ── */
+  .error-box { background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3); border-radius: 10px; padding: 12px 14px; color: #fca5a5; font-size: 13px; line-height: 1.6; }
+  .download-card { display: flex; align-items: center; gap: 12px; background: rgba(16,185,129,.1); border: 1px solid rgba(16,185,129,.3); border-radius: 12px; padding: 12px 16px; text-decoration: none; color: var(--text); margin: 8px 0; transition: background .15s; }
+  .download-card:hover { background: rgba(16,185,129,.18); }
+  .dl-icon { font-size: 24px; }
+  .dl-name { font-size: 13px; font-weight: 600; color: var(--accent2); }
+  .dl-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .dl-btn { margin-left: auto; background: var(--accent2); border: none; color: white; font-size: 12px; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+  .reset-btn { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 12px; margin-top: 6px; }
+  .reset-btn:hover { border-color: var(--accent); color: var(--text); }
+
+  /* ── SCROLLBAR ── */
+  ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-logo">
+    <svg viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="8" fill="#6366f1"/><path d="M7 14h14M7 10h10M7 18h8" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+    Staffing Forecast
+  </div>
+  <div class="status-label"><div class="status-dot" id="ollamaDot"></div><span id="ollamaStatus">checking ollama...</span></div>
+</div>
+
+<div class="main">
+
+  <!-- LEFT: Forecast generator -->
+  <div class="forecast-panel">
+    <div class="forecast-chat" id="forecastChat">
+
+      <!-- Upload step -->
+      <div class="msg" id="uploadStep">
+        <div class="avatar bot">🤖</div>
+        <div class="bubble bot">
+          <p><strong>Step 1 —</strong> Upload your 4 input files. Each must be an <strong>.xlsx</strong> file.</p>
+          <div class="upload-grid">
+            <div class="upload-card" id="card-staffing">
+              <input type="file" accept=".xlsx,.xls,.csv" id="file-staffing" onchange="handleFile('staffing',this)">
+              <div class="card-icon">👥</div>
+              <div class="card-label">Staffing Sheet</div>
+              <div class="card-hint">Names, bill role, band role, WBS</div>
+              <div class="card-filename" id="name-staffing"></div>
+            </div>
+            <div class="upload-card" id="card-rates">
+              <input type="file" accept=".xlsx,.xls,.csv" id="file-rates" onchange="handleFile('rates',this)">
+              <div class="card-icon">💰</div>
+              <div class="card-label">Rate Card</div>
+              <div class="card-hint">Client Bill Role → revenue rate</div>
+              <div class="card-filename" id="name-rates"></div>
+            </div>
+            <div class="upload-card" id="card-vacation">
+              <input type="file" accept=".xlsx,.xls,.csv" id="file-vacation" onchange="handleFile('vacation',this)">
+              <div class="card-icon">🏖️</div>
+              <div class="card-label">Vacation Tracker</div>
+              <div class="card-hint">Person → off dates</div>
+              <div class="card-filename" id="name-vacation"></div>
+            </div>
+            <div class="upload-card" id="card-bandcost">
+              <input type="file" accept=".xlsx,.xls,.csv" id="file-bandcost" onchange="handleFile('bandcost',this)">
+              <div class="card-icon">📊</div>
+              <div class="card-label">Band Cost Card</div>
+              <div class="card-hint">Consulting Band → cost rate</div>
+              <div class="card-filename" id="name-bandcost"></div>
+            </div>
+          </div>
+          <div class="url-row">
+            n8n webhook URL
+            <input id="webhookUrl" value="http://localhost:5678/webhook/staffing-forecast-v7" placeholder="http://localhost:5678/webhook/staffing-forecast-v7">
+          </div>
+          <button class="run-btn" id="runBtn" disabled onclick="runForecast()">
+            <span>⚡</span> Upload all 4 files to generate forecast
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- RIGHT: What-if Chat -->
+  <div class="whatif-panel">
+    <div class="whatif-header">
+      <div>
+        <h2>💬 What-if Scenario Analyser</h2>
+        <p>Ask questions about your forecast data after running it</p>
+      </div>
+      <div class="chip">✦ Claude</div>
+    </div>
+
+    <div class="whatif-msgs" id="whatifMsgs">
+      <div class="whatif-empty" id="whatifEmpty">
+        <div style="font-size:48px">📊</div>
+        <h3>Run your forecast first</h3>
+        <p>Once your forecast is generated, you can ask me anything about the numbers — what-if scenarios, margin impact analysis, cost sensitivity, and more.</p>
+        <div class="suggestion-chips">
+          <div class="suggestion-chip" onclick="sendSuggestion(this)">If costs increase 10%, what's the margin impact on each work number?</div>
+          <div class="suggestion-chip" onclick="sendSuggestion(this)">Which work number has the best margin?</div>
+          <div class="suggestion-chip" onclick="sendSuggestion(this)">Which resources are the most costly?</div>
+          <div class="suggestion-chip" onclick="sendSuggestion(this)">If revenue rates increase 20%, what's the impact?</div>
+          <div class="suggestion-chip" onclick="sendSuggestion(this)">Show a margin sensitivity table for cost changes of -20%, -10%, 0%, +10%, +20%</div>
+          <div class="suggestion-chip" onclick="sendSuggestion(this)">Show monthly breakdown for all work numbers</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="whatifInputArea">
+      <div class="whatif-locked" id="whatifLocked">
+        🔒 Run the forecast first to unlock the scenario analyser
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════
+const files    = { staffing: null, rates: null, vacation: null, bandcost: null };
+const csvData  = { staffing: '', rates: '', vacation: '', bandcost: '' };
+let reportData = null;   // populated after forecast completes
+let chatHistory = [];    // for Claude API conversation
+
+// ═══════════════════════════════════════════════════════
+//  OLLAMA STATUS CHECK
+// ═══════════════════════════════════════════════════════
+async function checkOllama() {
+  try {
+    const r = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(3000) });
+    if (r.ok) {
+      document.getElementById('ollamaDot').style.background = '#10b981';
+      document.getElementById('ollamaStatus').textContent = 'ollama ready';
+    } else throw new Error();
+  } catch {
+    try {
+      const r2 = await fetch('http://192.168.4.44:11434/api/tags', { signal: AbortSignal.timeout(3000) });
+      if (r2.ok) {
+        document.getElementById('ollamaDot').style.background = '#10b981';
+        document.getElementById('ollamaStatus').textContent = 'ollama ready';
+        return;
+      }
+    } catch {}
+    document.getElementById('ollamaDot').style.background = '#ef4444';
+    document.getElementById('ollamaStatus').textContent = 'ollama offline';
+  }
+}
+checkOllama();
+setInterval(checkOllama, 30000);
+
+// ═══════════════════════════════════════════════════════
+//  FILE HANDLING
+// ═══════════════════════════════════════════════════════
+function handleFile(key, input) {
+  const file = input.files[0];
+  if (!file) return;
+  files[key] = file;
+  const card = document.getElementById('card-' + key);
+  const nameEl = document.getElementById('name-' + key);
+  card.classList.add('filled');
+  nameEl.textContent = file.name;
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      if (file.name.endsWith('.csv')) {
+        csvData[key] = e.target.result;
+      } else {
+        const wb = XLSX.read(e.target.result, { type: 'binary', cellDates: true });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        csvData[key] = XLSX.utils.sheet_to_csv(ws);
+      }
+    } catch(err) {
+      addForecastMsg('bot', `❌ Could not read <strong>${file.name}</strong>.`);
+    }
+    checkAllUploaded();
+  };
+  file.name.endsWith('.csv') ? reader.readAsText(file) : reader.readAsBinaryString(file);
+}
+
+function checkAllUploaded() {
+  const allReady = csvData.staffing && csvData.rates && csvData.vacation && csvData.bandcost;
+  const btn = document.getElementById('runBtn');
+  btn.disabled = !allReady;
+  if (allReady) btn.innerHTML = '<span>⚡</span> Generate Forecast — all files ready';
+}
+
+// ═══════════════════════════════════════════════════════
+//  FORECAST CHAT HELPERS
+// ═══════════════════════════════════════════════════════
+function addForecastMsg(role, html, id) {
+  const chat = document.getElementById('forecastChat');
+  const msg = document.createElement('div');
+  msg.className = 'msg' + (role === 'user' ? ' user' : '');
+  if (id) msg.id = id;
+
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar ' + role;
+  avatar.textContent = role === 'bot' ? '🤖' : '🙂';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble ' + role;
+  bubble.innerHTML = html;
+
+  if (role === 'user') { msg.append(bubble, avatar); }
+  else                 { msg.append(avatar, bubble); }
+  chat.appendChild(msg);
+  chat.scrollTop = chat.scrollHeight;
+  return bubble;
+}
+
+function addProgressMsg() {
+  const steps = [
+    { id: 's1', label: 'Sending files to n8n...' },
+    { id: 's2', label: 'Extracting column headers...' },
+    { id: 's3', label: 'Llama mapping your columns to standard fields...' },
+    { id: 's4', label: 'Calculating hours, costs & vacation deductions...' },
+    { id: 's5', label: 'Building report...' },
+    { id: 's6', label: 'Building formatted Excel...' },
+  ];
+  let h = '<p><strong>Running forecast...</strong> <span id="elapsedTimer" style="font-size:12px;color:var(--muted)"></span></p><div class="progress-steps">';
+  for (const s of steps) h += `<div class="step" id="${s.id}"><div class="step-icon">○</div><span>${s.label}</span></div>`;
+  h += '</div>';
+  addForecastMsg('bot', h, 'progressMsg');
+}
+
+function setStep(id, state) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = 'step ' + state;
+  const icon = el.querySelector('.step-icon');
+  if (state === 'active') icon.innerHTML = '<div class="spinner"></div>';
+  else if (state === 'done')  icon.textContent = '✓';
+  else if (state === 'error') icon.textContent = '✗';
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ═══════════════════════════════════════════════════════
+//  MAIN FORECAST RUNNER
+// ═══════════════════════════════════════════════════════
+async function runForecast() {
+  const webhookUrl = document.getElementById('webhookUrl').value.trim();
+  if (!webhookUrl) { addForecastMsg('bot', '<div class="error-box">Please enter your n8n webhook URL above.</div>'); return; }
+
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-color:rgba(255,255,255,.3);border-top-color:#fff"></div> Running...';
+
+  addForecastMsg('user', '📤 Running forecast with uploaded files...');
+  addProgressMsg();
+
+  const startTime = Date.now();
+  const timerInterval = setInterval(() => {
+    const el = document.getElementById('elapsedTimer');
+    if (el) {
+      const s = Math.floor((Date.now()-startTime)/1000);
+      el.textContent = s >= 60 ? `(${Math.floor(s/60)}m ${s%60}s elapsed)` : `(${s}s elapsed)`;
+    }
+  }, 1000);
+
+  try {
+    setStep('s1', 'active');
+    await sleep(400);
+    const payload = { staffing_csv: csvData.staffing, rate_card_csv: csvData.rates, vacation_csv: csvData.vacation, band_cost_csv: csvData.bandcost };
+    setStep('s1', 'done'); setStep('s2', 'active'); await sleep(500);
+    setStep('s2', 'done'); setStep('s3', 'active'); await sleep(500);
+    setStep('s3', 'done'); setStep('s4', 'active');
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 600000);
+    let response;
+    try {
+      response = await fetch(webhookUrl, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload), signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+    } catch (fetchErr) {
+      clearTimeout(timeoutId);
+      if (fetchErr.name === 'AbortError') throw new Error('Request timed out after 10 minutes.');
+      throw new Error('NetworkError — cannot reach n8n. Make sure the workflow is active and Ollama is running with: OLLAMA_HOST=0.0.0.0 OLLAMA_ORIGINS=* ollama serve');
+    }
+
+    setStep('s4', 'done'); setStep('s5', 'active');
+    const rawBlob = await response.blob();
+    if (!response.ok) { const t = await rawBlob.text(); throw new Error(`n8n returned ${response.status}: ${t.substring(0,200)}`); }
+
+    // Parse JSON
+    const text = await rawBlob.text();
+    if (!text || text.trim() === '') throw new Error('n8n returned an empty response. Make sure the workflow is Published.');
+    let data;
+    try { data = JSON.parse(text); } catch(e) { throw new Error('Cannot parse n8n response: ' + text.substring(0,300)); }
+    if (data.error) throw new Error(data.error);
+
+    const report = data.report || data;
+    if (!report || !report.work_numbers || report.work_numbers.length === 0)
+      throw new Error('No work number data in response. Check your files have valid data.');
+    if (data.mapping && !report.mapping) report.mapping = data.mapping;
+
+    setStep('s5', 'done'); setStep('s6', 'active');
+    const blob = buildExcelFromReport(report);
+    const fileName = `staffing_forecast_${report.report_date || new Date().toISOString().split('T')[0]}.xlsx`;
+    await sleep(400);
+    setStep('s6', 'done');
+    clearInterval(timerInterval);
+
+    // Download
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = fileName; a.click();
+    URL.revokeObjectURL(url);
+
+    const fileSize = (blob.size/1024).toFixed(1) + ' KB';
+    addForecastMsg('bot', `
+      <p>✅ <strong>Forecast complete!</strong> Your formatted Excel is ready.</p>
+      <a class="download-card" href="${url}" download="${fileName}">
+        <span class="dl-icon">📊</span>
+        <div><div class="dl-name">${fileName}</div>
+        <div class="dl-meta">${fileSize} · 4 sheets: Summary, Resource Detail, Monthly Breakdown, Column Mapping</div></div>
+        <button class="dl-btn">↓ Download</button>
+      </a>
+      <button class="reset-btn" onclick="resetTool()">↩ Run another forecast</button>
+    `);
+
+    // Store report & unlock what-if chat
+    reportData = report;
+    unlockWhatIfChat(report);
+
+  } catch (err) {
+    clearInterval(timerInterval);
+    setStep('s5', 'error'); setStep('s6', 'error');
+    let hint = '';
+    if (err.message.includes('NetworkError') || err.message.includes('Failed to fetch'))
+      hint = '<br><br>💡 Make sure n8n is running and Ollama is running with <code>OLLAMA_HOST=0.0.0.0 OLLAMA_ORIGINS=* ollama serve</code>';
+    addForecastMsg('bot', `<div class="error-box">❌ ${err.message}${hint}</div>`);
+    btn.disabled = false;
+    btn.innerHTML = '<span>⚡</span> Try Again';
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  EXCEL BUILDER — with full SheetJS cell-level styling
+// ═══════════════════════════════════════════════════════
+function buildExcelFromReport(report) {
+  const wb  = XLSX.utils.book_new();
+  const wns = report.work_numbers || [];
+  const fmt = n => isNaN(parseFloat(n)) ? 0 : Math.round(parseFloat(n)*100)/100;
+  const pct = n => (fmt(n)).toFixed(1) + '%';
+
+  // ── Colour palette ──
+  const C = {
+    navyFg: 'FFFFFFFF', navyBg: 'FF1a237e',
+    tealFg: 'FFFFFFFF', tealBg: 'FF00695c',
+    greenFg:'FFFFFFFF', greenBg:'FF1b5e20',
+    blueFg: 'FF000000', blueBg: 'FFe3f2fd',
+    altBg:  'FFfafafa',
+    warnBg: 'FFFFF8e1',
+    negFg:  'FFb71c1c',
+    hdrFg:  'FFFFFFFF', hdrBg:  'FF37474f',
+    subBg:  'FFeceff1',
+    white:  'FFFFFFFF',
+  };
+
+  // Helper: build a cell with style
+  function cell(v, style) {
+    const c = { v, t: typeof v === 'number' ? 'n' : 's' };
+    if (style) c.s = style;
+    return c;
+  }
+
+  // Style factories
+  const bold = (fg='FF000000', bg=null, sz=11, border=false, numFmt=null, halign=null) => {
+    const s = { font: { bold: true, color: { rgb: fg }, sz }, alignment: { wrapText: false } };
+    if (halign) s.alignment.horizontal = halign;
+    if (bg) s.fill = { fgColor: { rgb: bg } };
+    if (numFmt) s.numFmt = numFmt;
+    if (border) s.border = { top:{style:'thin',color:{rgb:'FFBDBDBD'}}, bottom:{style:'thin',color:{rgb:'FFBDBDBD'}}, left:{style:'thin',color:{rgb:'FFBDBDBD'}}, right:{style:'thin',color:{rgb:'FFBDBDBD'}} };
+    return s;
+  };
+  const plain = (fg='FF000000', bg=null, numFmt=null, halign=null) => {
+    const s = { font: { color: { rgb: fg }, sz: 10 }, alignment: { wrapText: false } };
+    if (halign) s.alignment.horizontal = halign;
+    if (bg) s.fill = { fgColor: { rgb: bg } };
+    if (numFmt) s.numFmt = numFmt;
+    return s;
+  };
+  const money  = (fg, bg) => plain(fg, bg, '"$"#,##0.00', 'right');
+  const moneyB = (fg, bg) => bold(fg, bg, 11, false, '"$"#,##0.00', 'right');
+  const num    = (fg, bg) => plain(fg, bg, '#,##0.0', 'right');
+  const numB   = (fg, bg) => bold(fg, bg, 11, false, '#,##0.0', 'right');
+  const pctFmt = (fg, bg) => plain(fg, bg, '0.0"%"', 'right');
+  const pctFmtB= (fg, bg) => bold(fg, bg, 11, false, '0.0"%"', 'right');
+
+  // ── Sheet 1: Summary ──────────────────────────────────
+  function addCellsToSheet(ws, rowIdx, cells) {
+    cells.forEach((c, ci) => {
+      if (!c) return;
+      const addr = XLSX.utils.encode_cell({ r: rowIdx, c: ci });
+      ws[addr] = c;
+    });
+  }
+  function ensureRef(ws, maxR, maxC) {
+    ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:maxR,c:maxC} });
+  }
+
+  // Summary sheet
+  {
+    const ws = {};
+    let r = 0;
+
+    // Title
+    addCellsToSheet(ws, r++, [cell('Staffing Forecast — Revenue, Cost & Margin by Work Number', bold(C.navyFg, C.navyBg, 14))]);
+    addCellsToSheet(ws, r++, [cell('Report Date', bold()), cell(report.report_date||'', plain())]);
+    r++; // blank
+
+    // Portfolio header
+    addCellsToSheet(ws, r++, [
+      cell('',           bold(C.hdrFg, C.hdrBg)),
+      cell('Hours',      bold(C.hdrFg, C.hdrBg, 11, false, null, 'right')),
+      cell('Revenue',    bold(C.hdrFg, C.hdrBg, 11, false, null, 'right')),
+      cell('Cost',       bold(C.hdrFg, C.hdrBg, 11, false, null, 'right')),
+      cell('Margin',     bold(C.hdrFg, C.hdrBg, 11, false, null, 'right')),
+      cell('Margin %',   bold(C.hdrFg, C.hdrBg, 11, false, null, 'right')),
+    ]);
+
+    // Grand total
+    const gmp = report.grand_total_revenue > 0 ? report.grand_total_margin / report.grand_total_revenue * 100 : 0;
+    addCellsToSheet(ws, r++, [
+      cell('PORTFOLIO TOTAL', bold(C.greenFg, C.greenBg, 11)),
+      cell(fmt(report.grand_total_hours),   numB(C.greenFg, C.greenBg)),
+      cell(fmt(report.grand_total_revenue), moneyB(C.greenFg, C.greenBg)),
+      cell(fmt(report.grand_total_cost),    moneyB(C.greenFg, C.greenBg)),
+      cell(fmt(report.grand_total_margin),  moneyB(C.greenFg, C.greenBg)),
+      cell(fmt(gmp),                        pctFmtB(C.greenFg, C.greenBg)),
+    ]);
+    r++; // blank
+
+    // WBS header
+    addCellsToSheet(ws, r++, [
+      cell('Work Number', bold(C.hdrFg, C.hdrBg)),
+      cell('Hours',       bold(C.hdrFg, C.hdrBg, 11, false, null, 'right')),
+      cell('Revenue',     bold(C.hdrFg, C.hdrBg, 11, false, null, 'right')),
+      cell('Cost',        bold(C.hdrFg, C.hdrBg, 11, false, null, 'right')),
+      cell('Margin',      bold(C.hdrFg, C.hdrBg, 11, false, null, 'right')),
+      cell('Margin %',    bold(C.hdrFg, C.hdrBg, 11, false, null, 'right')),
+      cell('Resources',   bold(C.hdrFg, C.hdrBg, 11, false, null, 'right')),
+    ]);
+
+    wns.forEach((wbs, wi) => {
+      const bg = wi % 2 === 0 ? 'FFe8eaf6' : 'FFf3e5f5';
+      const mp = wbs.grand_total_revenue > 0 ? wbs.grand_total_margin / wbs.grand_total_revenue * 100 : 0;
+      const negMargin = wbs.grand_total_margin < 0;
+      addCellsToSheet(ws, r++, [
+        cell(wbs.work_number,            bold(negMargin ? C.negFg : 'FF1a237e', bg)),
+        cell(fmt(wbs.grand_total_hours), num(negMargin?C.negFg:'FF000000', bg)),
+        cell(fmt(wbs.grand_total_revenue), money(negMargin?C.negFg:'FF000000', bg)),
+        cell(fmt(wbs.grand_total_cost),    money(negMargin?C.negFg:'FF000000', bg)),
+        cell(fmt(wbs.grand_total_margin),  money(negMargin?C.negFg:'FF000000', bg)),
+        cell(fmt(mp),                      pctFmt(negMargin?C.negFg:'FF000000', bg)),
+        cell(wbs.resource_count||0,        plain(negMargin?C.negFg:'FF000000', bg, null, 'right')),
+      ]);
+    });
+
+    // Warnings
+    if ((report.data_warnings||[]).length > 0) {
+      r++;
+      addCellsToSheet(ws, r++, [cell('DATA WARNINGS', bold('FFf57f17', 'FFFFF8e1', 11))]);
+      for (const w of report.data_warnings)
+        addCellsToSheet(ws, r++, [cell('', null), cell(w, plain('FFe65100', 'FFFFF8e1'))]);
+    }
+
+    ensureRef(ws, r, 6);
+    ws['!cols'] = [22,12,16,16,16,10,10].map(w=>({wch:w}));
+    ws['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:6} }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Summary');
+  }
+
+  // ── Sheet 2: Resource Detail ──────────────────────────
+  {
+    const ws = {};
+    let r = 0;
+    const hdr = ['Work Number','Name','Client Bill Role','Consulting Band Role','Alloc %','Hours','Rev Rate','Cost Rate','Revenue','Cost','Margin','Margin %','Vacation','Start','End'];
+    addCellsToSheet(ws, r++, hdr.map(h => cell(h, bold(C.hdrFg, C.hdrBg))));
+
+    for (const wbs of wns) {
+      // WBS group header
+      addCellsToSheet(ws, r++, [cell(`── ${wbs.work_number}`, bold(C.tealFg, C.tealBg, 11))]);
+
+      for (const res of (wbs.resources||[])) {
+        const mp = res.total_revenue > 0 ? res.total_margin / res.total_revenue * 100 : 0;
+        const neg = res.total_margin < 0;
+        const fg = neg ? C.negFg : 'FF000000';
+        addCellsToSheet(ws, r++, [
+          cell(wbs.work_number,          plain(fg)),
+          cell(res.name||'',             plain(fg)),
+          cell(res.client_bill_role||'', plain(fg)),
+          cell(res.consulting_band_role||'',plain(fg)),
+          cell(fmt(res.allocation_pct),  pctFmt(fg)),
+          cell(fmt(res.total_hours),     num(fg)),
+          cell(fmt(res.revenue_rate),    money(fg)),
+          cell(fmt(res.cost_rate),       money(fg)),
+          cell(fmt(res.total_revenue),   money(fg)),
+          cell(fmt(res.total_cost),      money(fg)),
+          cell(fmt(res.total_margin),    money(neg?C.negFg:fg)),
+          cell(fmt(mp),                  pctFmt(neg?C.negFg:fg)),
+          cell(res.vacation_days||0,     plain(fg, null, null, 'right')),
+          cell(res.start_date||'',       plain(fg)),
+          cell(res.end_date||'',         plain(fg)),
+        ]);
+      }
+
+      // Subtotal
+      const smp = wbs.grand_total_revenue > 0 ? wbs.grand_total_margin / wbs.grand_total_revenue * 100 : 0;
+      addCellsToSheet(ws, r++, [
+        cell(wbs.work_number + ' TOTAL', bold('FF37474f', C.subBg)),
+        cell('',''), cell('',''), cell('',''),
+        cell('',''),
+        cell(fmt(wbs.grand_total_hours), numB('FF37474f', C.subBg)),
+        cell('',''), cell('',''),
+        cell(fmt(wbs.grand_total_revenue), moneyB('FF37474f', C.subBg)),
+        cell(fmt(wbs.grand_total_cost),    moneyB('FF37474f', C.subBg)),
+        cell(fmt(wbs.grand_total_margin),  moneyB(wbs.grand_total_margin<0?C.negFg:'FF37474f', C.subBg)),
+        cell(fmt(smp),                     pctFmtB('FF37474f', C.subBg)),
+      ]);
+      r++; // blank
+    }
+
+    ensureRef(ws, r, 14);
+    ws['!cols'] = [16,20,22,22,10,10,12,12,14,14,14,10,10,12,12].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb, ws, 'Resource Detail');
+  }
+
+  // ── Sheet 3: Monthly Breakdown ────────────────────────
+  {
+    const ws = {};
+    let r = 0;
+    const allMonths = new Set();
+    for (const wbs of wns) for (const m of Object.keys(wbs.monthly_summary||{})) allMonths.add(m);
+    const months = [...allMonths].sort();
+
+    const hdr = ['Work Number'];
+    for (const m of months) hdr.push(m+' Hrs', m+' Rev', m+' Cost', m+' Margin', m+' Mgn%');
+    addCellsToSheet(ws, r++, hdr.map(h => cell(h, bold(C.hdrFg, C.hdrBg, 10))));
+
+    for (const wbs of wns) {
+      const row = [cell(wbs.work_number, plain('FF1a237e'))];
+      for (const m of months) {
+        const d = (wbs.monthly_summary||{})[m]||{hours:0,revenue_usd:0,cost_usd:0,margin_usd:0,margin_pct:0};
+        const mp = d.revenue_usd > 0 ? d.margin_usd / d.revenue_usd * 100 : 0;
+        row.push(
+          cell(fmt(d.hours),       num('FF000000')),
+          cell(fmt(d.revenue_usd), money('FF000000')),
+          cell(fmt(d.cost_usd),    money('FF000000')),
+          cell(fmt(d.margin_usd),  money(d.margin_usd < 0 ? C.negFg : 'FF000000')),
+          cell(fmt(mp),            pctFmt(d.margin_usd < 0 ? C.negFg : 'FF000000')),
+        );
+      }
+      addCellsToSheet(ws, r++, row);
+    }
+
+    // Grand total row
+    r++;
+    const totRow = [cell('TOTAL', bold(C.greenFg, C.greenBg))];
+    for (const m of months) {
+      let h=0,rv=0,c=0,mg=0;
+      for (const wbs of wns) {
+        const d=(wbs.monthly_summary||{})[m]||{hours:0,revenue_usd:0,cost_usd:0,margin_usd:0};
+        h+=d.hours||0; rv+=d.revenue_usd||0; c+=d.cost_usd||0; mg+=d.margin_usd||0;
+      }
+      const mp = rv > 0 ? mg/rv*100 : 0;
+      totRow.push(
+        cell(Math.round(h*10)/10,       numB(C.greenFg, C.greenBg)),
+        cell(Math.round(rv*100)/100,     moneyB(C.greenFg, C.greenBg)),
+        cell(Math.round(c*100)/100,      moneyB(C.greenFg, C.greenBg)),
+        cell(Math.round(mg*100)/100,     moneyB(C.greenFg, C.greenBg)),
+        cell(Math.round(mp*10)/10,       pctFmtB(C.greenFg, C.greenBg)),
+      );
+    }
+    addCellsToSheet(ws, r++, totRow);
+
+    ensureRef(ws, r, hdr.length-1);
+    XLSX.utils.book_append_sheet(wb, ws, 'Monthly Breakdown');
+  }
+
+  // ── Sheet 4: Column Mapping ───────────────────────────
+  {
+    const ws = {};
+    let r = 0;
+    addCellsToSheet(ws, r++, [cell('Column Mapping Used', bold(C.navyFg, C.navyBg, 13))]);
+    r++;
+    addCellsToSheet(ws, r++, [
+      cell('File',         bold(C.hdrFg, C.hdrBg)),
+      cell('Standard Field', bold(C.hdrFg, C.hdrBg)),
+      cell('Your Column Name', bold(C.hdrFg, C.hdrBg)),
+    ]);
+    if (report.mapping) {
+      const addMappings = (label, obj) => {
+        for (const [std, real] of Object.entries(obj||{})) {
+          if (std.startsWith('_')) continue;
+          const missing = !real || real === 'null';
+          addCellsToSheet(ws, r++, [
+            cell(label,  plain()),
+            cell(std,    plain('FF455a64')),
+            cell(real||'(not found)', missing ? plain(C.negFg, 'FFFCE4EC') : plain('FF1b5e20', 'FFe8f5e9')),
+          ]);
+        }
+      };
+      addMappings('Staffing',       report.mapping.staffing);
+      addMappings('Role Rate Card', report.mapping.rate_card);
+      addMappings('Vacation',       report.mapping.vacation);
+      addMappings('Band Cost Card', report.mapping.band_cost);
+    }
+    ensureRef(ws, r, 2);
+    ws['!cols'] = [{wch:18},{wch:26},{wch:32}];
+    ws['!merges'] = [{ s:{r:0,c:0}, e:{r:0,c:2} }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Column Mapping');
+  }
+
+  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
+  return new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+
+// ═══════════════════════════════════════════════════════
+//  WHAT-IF CHAT — unlock after forecast
+// ═══════════════════════════════════════════════════════
+function unlockWhatIfChat(report) {
+  const inputArea = document.getElementById('whatifInputArea');
+  inputArea.innerHTML = `
+    <div class="whatif-input-row">
+      <textarea class="whatif-input" id="whatifInput" placeholder="e.g. If costs increase 10%, what's the margin impact on WBS-101?" rows="1"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendWhatIf()}"></textarea>
+      <button class="whatif-send" id="whatifSend" onclick="sendWhatIf()" title="Send">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </button>
+    </div>`;
+
+  // Hide the empty state, show a welcome message instead
+  const empty = document.getElementById('whatifEmpty');
+  if (empty) empty.style.display = 'none';
+
+  addWhatIfMsg('bot', buildWelcomeSummary(report));
+}
+
+function buildWelcomeSummary(report) {
+  const wns = report.work_numbers || [];
+  const gmp = report.grand_total_revenue > 0 ? (report.grand_total_margin / report.grand_total_revenue * 100).toFixed(1) : '0.0';
+  let table = `<table><tr><th>Work Number</th><th style="text-align:right">Revenue</th><th style="text-align:right">Cost</th><th style="text-align:right">Margin</th><th style="text-align:right">Mgn%</th></tr>`;
+  for (const wbs of wns) {
+    const mp = wbs.grand_total_revenue > 0 ? (wbs.grand_total_margin / wbs.grand_total_revenue * 100).toFixed(1) : '0.0';
+    const neg = wbs.grand_total_margin < 0;
+    table += `<tr${neg?" class='neg'":""}><td>${wbs.work_number}</td><td style="text-align:right">${fmtK(wbs.grand_total_revenue)}</td><td style="text-align:right">${fmtK(wbs.grand_total_cost)}</td><td style="text-align:right">${fmtK(wbs.grand_total_margin)}</td><td style="text-align:right">${mp}%</td></tr>`;
+  }
+  table += `<tr class="total"><td>PORTFOLIO</td><td style="text-align:right">${fmtK(report.grand_total_revenue)}</td><td style="text-align:right">${fmtK(report.grand_total_cost)}</td><td style="text-align:right">${fmtK(report.grand_total_margin)}</td><td style="text-align:right">${gmp}%</td></tr></table>`;
+
+  return `<p>✅ <strong>Forecast loaded!</strong> Here's your portfolio at a glance:</p>${table}
+<p style="margin-top:8px;font-size:12px;color:var(--muted)">Ask me any what-if question — cost changes, rate adjustments, headcount scenarios, or margin sensitivity analysis.</p>`;
+}
+
+function fmtK(n) {
+  n = parseFloat(n)||0;
+  if (Math.abs(n) >= 1000000) return '$'+(n/1000000).toFixed(2)+'M';
+  if (Math.abs(n) >= 1000)    return '$'+(n/1000).toFixed(1)+'K';
+  return '$'+n.toFixed(0);
+}
+
+// ═══════════════════════════════════════════════════════
+//  WHAT-IF MESSAGE HANDLING
+// ═══════════════════════════════════════════════════════
+function addWhatIfMsg(role, html, id) {
+  const msgs = document.getElementById('whatifMsgs');
+  const msg = document.createElement('div');
+  msg.className = 'msg' + (role === 'user' ? ' user' : '');
+  if (id) msg.id = id;
+
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar ' + role;
+  avatar.textContent = role === 'bot' ? '🤖' : '🙂';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble ' + role;
+  bubble.innerHTML = html;
+
+  role === 'user' ? msg.append(bubble, avatar) : msg.append(avatar, bubble);
+  msgs.appendChild(msg);
+  msgs.scrollTop = msgs.scrollHeight;
+  return bubble;
+}
+
+function sendSuggestion(el) {
+  if (!reportData) {
+    addForecastMsg('bot', '<div class="error-box">Please run your forecast first.</div>');
+    return;
+  }
+  const text = el.textContent;
+  const inp = document.getElementById('whatifInput');
+  if (inp) { inp.value = text; sendWhatIf(); }
+}
+
+// ═══════════════════════════════════════════════════════
+//  WHAT-IF ENGINE — runs locally, no API call needed
+// ═══════════════════════════════════════════════════════
+const WI_SUGGESTIONS = [
+  "If costs increase 10%, what's the margin impact on each work number?",
+  "If costs decrease 15%, what's the new portfolio margin?",
+  "Which work number has the best margin %?",
+  "Which resources are the most costly?",
+  "If revenue rates increase 20%, what's the impact?",
+  "Show a margin sensitivity table for cost changes of -20%, -10%, 0%, +10%, +20%",
+  "What if we remove the most expensive resource from WBS-101?",
+  "Which work number would benefit most from a 10% rate increase?",
+];
+
+async function sendWhatIf() {
+  const inp  = document.getElementById('whatifInput');
+  const send = document.getElementById('whatifSend');
+  if (!inp || !reportData) return;
+  const q = inp.value.trim();
+  if (!q) return;
+
+  inp.value = '';
+  inp.disabled = true;
+  send.disabled = true;
+
+  addWhatIfMsg('user', q);
+  const thinkId = 'think-' + Date.now();
+  addWhatIfMsg('bot', '<div class="thinking"><span></span><span></span><span></span></div>', thinkId);
+
+  // Small delay so thinking dots show
+  await new Promise(r => setTimeout(r, 300));
+
+  const reply = analyseScenario(q, reportData);
+
+  const thinkEl = document.getElementById(thinkId);
+  if (thinkEl) thinkEl.closest('.msg').remove();
+
+  addWhatIfMsg('bot', reply);
+  inp.disabled = false;
+  send.disabled = false;
+  inp.focus();
+}
+
+// ── Core what-if analyser ──────────────────────────────
+function analyseScenario(q, report) {
+  const ql = q.toLowerCase();
+
+  // Detect intent
+  const costPct    = extractPct(ql, ['cost','costs','band','internal']);
+  const revPct     = extractPct(ql, ['revenue','rate','rates','bill','client']);
+  const anyPct     = extractPct(ql, []);
+  const wbsFilter  = extractWBS(ql, report);
+  const isSensitivity = ql.includes('sensitiv') || ql.includes('table') || (ql.includes('%') && (ql.includes('scenario') || ql.includes('range') || ql.includes('various')));
+  const isWorstBest = ql.includes('best') || ql.includes('worst') || ql.includes('highest') || ql.includes('lowest');
+  const isCostly   = ql.includes('costly') || ql.includes('expensive') || ql.includes('cost rate');
+  const isRemove   = ql.includes('remov') || ql.includes('without') || ql.includes('drop');
+  const isAdd      = ql.includes('add ') || ql.includes('hire') || ql.includes('new resource');
+  const isMonthly  = ql.includes('month') || ql.includes('quarter');
+
+  if (isSensitivity) return sensitivityTable(report, wbsFilter);
+  if (isCostly) return topCostlyResources(report, wbsFilter);
+  if (isWorstBest) return bestWorstWBS(report);
+  if (isRemove && !isAdd) return removeResourceScenario(q, report, wbsFilter);
+  if (isMonthly) return monthlyBreakdown(report, wbsFilter);
+
+  if (costPct !== null && revPct !== null) return combinedScenario(report, costPct, revPct, wbsFilter);
+  if (costPct !== null) return costChangeScenario(report, costPct, wbsFilter);
+  if (revPct !== null)  return revenueChangeScenario(report, revPct, wbsFilter);
+
+  // Generic: try any % if found
+  if (anyPct !== null) {
+    if (ql.includes('rev') || ql.includes('rate') || ql.includes('bill')) return revenueChangeScenario(report, anyPct, wbsFilter);
+    return costChangeScenario(report, anyPct, wbsFilter);
+  }
+
+  return helpMessage(report);
+}
+
+// ── Extract % change from question ──
+function extractPct(ql, keywords) {
+  // Look for patterns like "10%", "increase by 10", "reduce 15%", "-5%", "+20%"
+  const patterns = [
+    /([+-]?\d+\.?\d*)\s*%/g,
+    /by\s+([+-]?\d+\.?\d*)\s*percent/g,
+    /([+-]?\d+\.?\d*)\s*percent/g,
+  ];
+  for (const p of patterns) {
+    let m;
+    p.lastIndex = 0;
+    while ((m = p.exec(ql)) !== null) {
+      const val = parseFloat(m[1]);
+      if (!isNaN(val)) {
+        // If keywords specified, check proximity
+        if (keywords.length === 0) return val;
+        const pos = m.index;
+        const context = ql.substring(Math.max(0, pos-40), pos+40);
+        if (keywords.some(k => context.includes(k))) return val;
+      }
+    }
+  }
+  // Looser: find any number near "increase/decrease/change"
+  if (keywords.length === 0) {
+    const m = ql.match(/(?:increase|decrease|rise|fall|up|down|by|change)\s+(\d+\.?\d*)/);
+    if (m) return parseFloat(m[1]) * (ql.includes('decreas') || ql.includes('reduc') || ql.includes('fall') || ql.includes('down') ? -1 : 1);
+  }
+  return null;
+}
+
+function extractWBS(ql, report) {
+  const wbs = (report.work_numbers||[]).map(w => w.work_number);
+  const found = wbs.filter(w => ql.includes(w.toLowerCase()));
+  return found.length > 0 ? found : null; // null = all
+}
+
+// ── Scenario: cost change ──
+function costChangeScenario(report, pct, wbsFilter) {
+  const mult = 1 + pct/100;
+  const wns  = (report.work_numbers||[]).filter(w => !wbsFilter || wbsFilter.includes(w.work_number));
+  const dir  = pct >= 0 ? 'increase' : 'decrease';
+  const absPct = Math.abs(pct);
+
+  let rows = '';
+  let totRevOld=0, totCostOld=0, totMgnOld=0, totRevNew=0, totCostNew=0, totMgnNew=0;
+
+  for (const wbs of wns) {
+    const oldRev  = wbs.grand_total_revenue || 0;
+    const oldCost = wbs.grand_total_cost    || 0;
+    const oldMgn  = wbs.grand_total_margin  || 0;
+    const newCost = oldCost * mult;
+    const newMgn  = oldRev - newCost;
+    const oldMp   = oldRev > 0 ? oldMgn/oldRev*100 : 0;
+    const newMp   = oldRev > 0 ? newMgn/oldRev*100 : 0;
+    const delta   = newMgn - oldMgn;
+    totRevOld+=oldRev; totCostOld+=oldCost; totMgnOld+=oldMgn;
+    totRevNew+=oldRev; totCostNew+=newCost; totMgnNew+=newMgn;
+
+    const neg = newMgn < 0;
+    rows += `<tr${neg?" class='neg'":""}>
+      <td><strong>${wbs.work_number}</strong></td>
+      <td style="text-align:right">${fmtM(oldMgn)} (${oldMp.toFixed(1)}%)</td>
+      <td style="text-align:right">${fmtM(newMgn)} (${newMp.toFixed(1)}%)</td>
+      <td style="text-align:right" class="${delta<0?'danger':'highlight'}">${delta>=0?'+':''}${fmtM(delta)}</td>
+      <td style="text-align:right" class="${(newMp-oldMp)<0?'danger':'highlight'}">${(newMp-oldMp)>=0?'+':''}${(newMp-oldMp).toFixed(1)}pp</td>
+    </tr>`;
+  }
+
+  // Portfolio total row
+  const totOldMp = totRevOld>0?totMgnOld/totRevOld*100:0;
+  const totNewMp = totRevNew>0?totMgnNew/totRevNew*100:0;
+  const totDelta = totMgnNew - totMgnOld;
+  rows += `<tr class="total">
+    <td>PORTFOLIO</td>
+    <td style="text-align:right">${fmtM(totMgnOld)} (${totOldMp.toFixed(1)}%)</td>
+    <td style="text-align:right">${fmtM(totMgnNew)} (${totNewMp.toFixed(1)}%)</td>
+    <td style="text-align:right" class="${totDelta<0?'danger':'highlight'}">${totDelta>=0?'+':''}${fmtM(totDelta)}</td>
+    <td style="text-align:right" class="${(totNewMp-totOldMp)<0?'danger':'highlight'}">${(totNewMp-totOldMp)>=0?'+':''}${(totNewMp-totOldMp).toFixed(1)}pp</td>
+  </tr>`;
+
+  const scope = wbsFilter ? wbsFilter.join(', ') : 'all work numbers';
+  return `<p>A <strong>${absPct}% cost ${dir}</strong> across <strong>${scope}</strong> would have this impact on margins:</p>
+<table>
+  <tr><th>Work Number</th><th style="text-align:right">Current Margin</th><th style="text-align:right">New Margin</th><th style="text-align:right">Change ($)</th><th style="text-align:right">Change (pp)</th></tr>
+  ${rows}
+</table>
+<p style="margin-top:8px;font-size:12px;color:var(--muted)">pp = percentage points. Revenue unchanged at ${fmtM(totRevOld)}.</p>`;
+}
+
+// ── Scenario: revenue/rate change ──
+function revenueChangeScenario(report, pct, wbsFilter) {
+  const mult = 1 + pct/100;
+  const wns  = (report.work_numbers||[]).filter(w => !wbsFilter || wbsFilter.includes(w.work_number));
+  const dir  = pct >= 0 ? 'increase' : 'decrease';
+
+  let rows = '';
+  let totMgnOld=0, totMgnNew=0, totRevOld=0, totRevNew=0;
+
+  for (const wbs of wns) {
+    const oldRev = wbs.grand_total_revenue||0;
+    const oldCost= wbs.grand_total_cost||0;
+    const oldMgn = wbs.grand_total_margin||0;
+    const newRev = oldRev * mult;
+    const newMgn = newRev - oldCost;
+    const oldMp  = oldRev>0?oldMgn/oldRev*100:0;
+    const newMp  = newRev>0?newMgn/newRev*100:0;
+    const delta  = newMgn - oldMgn;
+    totRevOld+=oldRev; totRevNew+=newRev; totMgnOld+=oldMgn; totMgnNew+=newMgn;
+
+    rows += `<tr${newMgn<0?" class='neg'":""}>
+      <td><strong>${wbs.work_number}</strong></td>
+      <td style="text-align:right">${fmtM(oldRev)}</td>
+      <td style="text-align:right">${fmtM(newRev)}</td>
+      <td style="text-align:right">${fmtM(oldMgn)} (${oldMp.toFixed(1)}%)</td>
+      <td style="text-align:right">${fmtM(newMgn)} (${newMp.toFixed(1)}%)</td>
+      <td style="text-align:right" class="${delta<0?'danger':'highlight'}">${delta>=0?'+':''}${fmtM(delta)}</td>
+    </tr>`;
+  }
+
+  const totOldMp = totRevOld>0?totMgnOld/totRevOld*100:0;
+  const totNewMp = totRevNew>0?totMgnNew/totRevNew*100:0;
+  rows += `<tr class="total"><td>PORTFOLIO</td><td style="text-align:right">${fmtM(totRevOld)}</td><td style="text-align:right">${fmtM(totRevNew)}</td><td style="text-align:right">${fmtM(totMgnOld)} (${totOldMp.toFixed(1)}%)</td><td style="text-align:right">${fmtM(totMgnNew)} (${totNewMp.toFixed(1)}%)</td><td style="text-align:right" class="${(totMgnNew-totMgnOld)<0?'danger':'highlight'}">${(totMgnNew-totMgnOld)>=0?'+':''}${fmtM(totMgnNew-totMgnOld)}</td></tr>`;
+
+  const scope = wbsFilter ? wbsFilter.join(', ') : 'all work numbers';
+  return `<p>A <strong>${Math.abs(pct)}% revenue rate ${dir}</strong> across <strong>${scope}</strong>:</p>
+<table>
+  <tr><th>Work Number</th><th style="text-align:right">Old Revenue</th><th style="text-align:right">New Revenue</th><th style="text-align:right">Old Margin</th><th style="text-align:right">New Margin</th><th style="text-align:right">Delta</th></tr>
+  ${rows}
+</table>`;
+}
+
+// ── Scenario: combined cost + revenue change ──
+function combinedScenario(report, costPct, revPct, wbsFilter) {
+  const costMult = 1 + costPct/100;
+  const revMult  = 1 + revPct/100;
+  const wns = (report.work_numbers||[]).filter(w => !wbsFilter || wbsFilter.includes(w.work_number));
+
+  let rows = '', totOld=0, totNew=0, totRev=0;
+  for (const wbs of wns) {
+    const oldRev = wbs.grand_total_revenue||0;
+    const oldCost= wbs.grand_total_cost||0;
+    const oldMgn = oldRev - oldCost;
+    const newRev = oldRev * revMult;
+    const newCost= oldCost * costMult;
+    const newMgn = newRev - newCost;
+    const oldMp = oldRev>0?oldMgn/oldRev*100:0;
+    const newMp = newRev>0?newMgn/newRev*100:0;
+    totOld+=oldMgn; totNew+=newMgn; totRev+=oldRev;
+    rows += `<tr${newMgn<0?" class='neg'":""}><td><strong>${wbs.work_number}</strong></td><td style="text-align:right">${fmtM(oldMgn)} (${oldMp.toFixed(1)}%)</td><td style="text-align:right">${fmtM(newMgn)} (${newMp.toFixed(1)}%)</td><td style="text-align:right" class="${(newMgn-oldMgn)<0?'danger':'highlight'}">${(newMgn-oldMgn)>=0?'+':''}${fmtM(newMgn-oldMgn)}</td></tr>`;
+  }
+  rows += `<tr class="total"><td>PORTFOLIO</td><td style="text-align:right">${fmtM(totOld)}</td><td style="text-align:right">${fmtM(totNew)}</td><td style="text-align:right" class="${(totNew-totOld)<0?'danger':'highlight'}">${(totNew-totOld)>=0?'+':''}${fmtM(totNew-totOld)}</td></tr>`;
+
+  return `<p>Combined scenario: <strong>costs ${costPct>=0?'+':''}${costPct}%</strong> and <strong>revenue ${revPct>=0?'+':''}${revPct}%</strong>:</p>
+<table><tr><th>Work Number</th><th style="text-align:right">Current Margin</th><th style="text-align:right">New Margin</th><th style="text-align:right">Change</th></tr>${rows}</table>`;
+}
+
+// ── Sensitivity table ──
+function sensitivityTable(report, wbsFilter) {
+  const changes = [-20, -10, -5, 0, 5, 10, 20];
+  const wns = (report.work_numbers||[]).filter(w => !wbsFilter || wbsFilter.includes(w.work_number));
+
+  let hdr = '<tr><th>Cost Change</th>';
+  for (const wbs of wns) hdr += `<th style="text-align:right">${wbs.work_number}</th>`;
+  hdr += '<th style="text-align:right">Portfolio</th></tr>';
+
+  let rows = '';
+  for (const chg of changes) {
+    const mult = 1 + chg/100;
+    rows += `<tr${chg===0?' style="font-weight:600;background:rgba(99,102,241,.07)"':''}>`;
+    rows += `<td>${chg===0?'Current (0%)': (chg>0?'+':'')+chg+'%'}</td>`;
+    let totRev=0, totMgn=0;
+    for (const wbs of wns) {
+      const rev = wbs.grand_total_revenue||0;
+      const mgn = rev - (wbs.grand_total_cost||0)*mult;
+      const mp  = rev>0?mgn/rev*100:0;
+      totRev+=rev; totMgn+=mgn;
+      rows += `<td style="text-align:right" class="${mgn<0?'danger':chg<0?'highlight':''}">${fmtM(mgn)} (${mp.toFixed(1)}%)</td>`;
+    }
+    const totalMp = totRev>0?totMgn/totRev*100:0;
+    rows += `<td style="text-align:right" class="${totMgn<0?'danger':chg<0?'highlight':''}">${fmtM(totMgn)} (${totalMp.toFixed(1)}%)</td>`;
+    rows += '</tr>';
+  }
+
+  const scope = wbsFilter ? wbsFilter.join(', ') : 'all work numbers';
+  return `<p><strong>Margin sensitivity to cost changes</strong> — ${scope}. Revenue held constant.</p>
+<table>${hdr}${rows}</table>
+<p style="font-size:12px;color:var(--muted);margin-top:6px">Highlighted green = better than current; red = negative margin.</p>`;
+}
+
+// ── Top costly resources ──
+function topCostlyResources(report, wbsFilter) {
+  const all = [];
+  for (const wbs of (report.work_numbers||[])) {
+    if (wbsFilter && !wbsFilter.includes(wbs.work_number)) continue;
+    for (const res of (wbs.resources||[])) {
+      all.push({ wbs: wbs.work_number, ...res });
+    }
+  }
+  all.sort((a,b) => (b.total_cost||0) - (a.total_cost||0));
+  const top = all.slice(0, 10);
+
+  let rows = '';
+  for (const r of top) {
+    const mp = r.total_revenue>0 ? r.total_margin/r.total_revenue*100 : 0;
+    rows += `<tr${r.total_margin<0?" class='neg'":""}>
+      <td>${r.name||'—'}</td><td>${r.wbs}</td><td>${r.consulting_band_role||''}</td>
+      <td style="text-align:right">${fmtM(r.cost_rate)}/hr</td>
+      <td style="text-align:right">${fmtM(r.total_cost)}</td>
+      <td style="text-align:right">${fmtM(r.total_revenue)}</td>
+      <td style="text-align:right" class="${r.total_margin<0?'danger':''}">${fmtM(r.total_margin)} (${mp.toFixed(1)}%)</td>
+    </tr>`;
+  }
+  return `<p>Top resources by internal cost:</p>
+<table>
+  <tr><th>Name</th><th>WBS</th><th>Band</th><th style="text-align:right">Cost Rate</th><th style="text-align:right">Total Cost</th><th style="text-align:right">Revenue</th><th style="text-align:right">Margin</th></tr>
+  ${rows}
+</table>`;
+}
+
+// ── Best/worst WBS ──
+function bestWorstWBS(report) {
+  const wns = [...(report.work_numbers||[])];
+  wns.sort((a,b) => {
+    const amp = a.grand_total_revenue>0?a.grand_total_margin/a.grand_total_revenue:0;
+    const bmp = b.grand_total_revenue>0?b.grand_total_margin/b.grand_total_revenue:0;
+    return bmp - amp;
+  });
+  let rows = '';
+  for (const wbs of wns) {
+    const mp = wbs.grand_total_revenue>0?wbs.grand_total_margin/wbs.grand_total_revenue*100:0;
+    rows += `<tr${wbs.grand_total_margin<0?" class='neg'":""}>
+      <td><strong>${wbs.work_number}</strong></td>
+      <td style="text-align:right">${fmtM(wbs.grand_total_revenue)}</td>
+      <td style="text-align:right">${fmtM(wbs.grand_total_cost)}</td>
+      <td style="text-align:right">${fmtM(wbs.grand_total_margin)}</td>
+      <td style="text-align:right" class="${mp<30?'danger':mp>45?'highlight':''}">${mp.toFixed(1)}%</td>
+      <td>${wbs.resource_count||0} resources</td>
+    </tr>`;
+  }
+  return `<p>Work numbers ranked by margin % (best to worst):</p>
+<table>
+  <tr><th>Work Number</th><th style="text-align:right">Revenue</th><th style="text-align:right">Cost</th><th style="text-align:right">Margin</th><th style="text-align:right">Margin%</th><th>Team</th></tr>
+  ${rows}
+</table>
+<p style="font-size:12px;color:var(--muted);margin-top:6px"><span class="highlight">Green %</span> = margin above 45%. <span class="danger">Red %</span> = margin below 30%.</p>`;
+}
+
+// ── Remove resource scenario ──
+function removeResourceScenario(q, report, wbsFilter) {
+  // Find most expensive resource in filtered WBS
+  const all = [];
+  for (const wbs of (report.work_numbers||[])) {
+    if (wbsFilter && !wbsFilter.includes(wbs.work_number)) continue;
+    for (const res of (wbs.resources||[])) all.push({ wbs: wbs.work_number, ...res });
+  }
+  if (all.length === 0) return `<p>No resources found for the specified work number(s).</p>`;
+
+  all.sort((a,b) => (b.total_cost||0)-(a.total_cost||0));
+  const target = all[0];
+  const wbs = (report.work_numbers||[]).find(w => w.work_number === target.wbs);
+  const newRev  = (wbs.grand_total_revenue||0) - (target.total_revenue||0);
+  const newCost = (wbs.grand_total_cost||0)    - (target.total_cost||0);
+  const newMgn  = newRev - newCost;
+  const newMp   = newRev > 0 ? newMgn/newRev*100 : 0;
+  const oldMp   = wbs.grand_total_revenue > 0 ? wbs.grand_total_margin/wbs.grand_total_revenue*100 : 0;
+
+  return `<p>Removing the most expensive resource from <strong>${target.wbs}</strong> — <strong>${target.name}</strong> (${target.consulting_band_role}, cost rate ${fmtM(target.cost_rate)}/hr):</p>
+<table>
+  <tr><th></th><th style="text-align:right">Current</th><th style="text-align:right">Without ${target.name}</th><th style="text-align:right">Change</th></tr>
+  <tr><td>Revenue</td><td style="text-align:right">${fmtM(wbs.grand_total_revenue)}</td><td style="text-align:right">${fmtM(newRev)}</td><td style="text-align:right" class="danger">-${fmtM(target.total_revenue||0)}</td></tr>
+  <tr><td>Cost</td><td style="text-align:right">${fmtM(wbs.grand_total_cost)}</td><td style="text-align:right">${fmtM(newCost)}</td><td style="text-align:right" class="highlight">-${fmtM(target.total_cost||0)}</td></tr>
+  <tr class="total"><td>Margin</td><td style="text-align:right">${fmtM(wbs.grand_total_margin)} (${oldMp.toFixed(1)}%)</td><td style="text-align:right">${fmtM(newMgn)} (${newMp.toFixed(1)}%)</td><td style="text-align:right" class="${(newMgn-(wbs.grand_total_margin||0))<0?'danger':'highlight'}">${(newMgn-(wbs.grand_total_margin||0))>=0?'+':''}${fmtM(newMgn-(wbs.grand_total_margin||0))}</td></tr>
+</table>
+<p style="font-size:12px;color:var(--muted);margin-top:6px">Note: this also removes the revenue that resource generates — net margin impact depends on whether they can be backfilled at a lower cost.</p>`;
+}
+
+// ── Monthly breakdown ──
+function monthlyBreakdown(report, wbsFilter) {
+  const wns = (report.work_numbers||[]).filter(w => !wbsFilter || wbsFilter.includes(w.work_number));
+  const allMonths = new Set();
+  for (const wbs of wns) for (const m of Object.keys(wbs.monthly_summary||{})) allMonths.add(m);
+  const months = [...allMonths].sort().slice(0, 12); // max 12 months for readability
+  if (months.length === 0) return `<p>No monthly data available.</p>`;
+
+  let hdr = '<tr><th>Month</th>';
+  for (const wbs of wns) hdr += `<th style="text-align:right">${wbs.work_number} Rev</th><th style="text-align:right">${wbs.work_number} Mgn%</th>`;
+  hdr += '</tr>';
+
+  let rows = '';
+  for (const m of months) {
+    rows += `<tr><td>${m}</td>`;
+    for (const wbs of wns) {
+      const d = (wbs.monthly_summary||{})[m]||{revenue_usd:0,margin_usd:0};
+      const mp = d.revenue_usd>0?d.margin_usd/d.revenue_usd*100:0;
+      rows += `<td style="text-align:right">${fmtM(d.revenue_usd)}</td><td style="text-align:right" class="${mp<30?'danger':mp>45?'highlight':''}">${mp.toFixed(1)}%</td>`;
+    }
+    rows += '</tr>';
+  }
+  return `<p>Monthly revenue & margin breakdown:</p><table>${hdr}${rows}</table>`;
+}
+
+// ── Help / default ──
+function helpMessage(report) {
+  const wbsList = (report.work_numbers||[]).map(w=>w.work_number).join(', ');
+  return `<p>I can analyse these types of scenarios on your forecast data (${wbsList}):</p>
+<table>
+  <tr><th>Question type</th><th>Example</th></tr>
+  <tr><td>Cost sensitivity</td><td>"If costs increase 10%, what's the margin impact?"</td></tr>
+  <tr><td>Revenue change</td><td>"If rates increase 15% on WBS-102?"</td></tr>
+  <tr><td>Combined</td><td>"Costs +10% and rates +5% — net impact?"</td></tr>
+  <tr><td>Sensitivity table</td><td>"Show sensitivity table for -20% to +20% cost changes"</td></tr>
+  <tr><td>Rankings</td><td>"Which work number has the best margin?"</td></tr>
+  <tr><td>Cost drivers</td><td>"Which resources are most costly?"</td></tr>
+  <tr><td>Headcount</td><td>"What if we remove the most expensive resource from WBS-101?"</td></tr>
+  <tr><td>Monthly</td><td>"Show monthly breakdown for WBS-103"</td></tr>
+</table>
+<p style="font-size:12px;color:var(--muted);margin-top:6px">Try rephrasing your question — or click a suggestion chip below.</p>`;
+}
+
+// ── Format money helper ──
+function fmtM(n) {
+  n = parseFloat(n)||0;
+  const abs = Math.abs(n);
+  const sign = n < 0 ? '-' : '';
+  if (abs >= 1000000) return sign + '$' + (abs/1000000).toFixed(2) + 'M';
+  if (abs >= 1000)    return sign + '$' + (abs/1000).toFixed(1)    + 'K';
+  return sign + '$' + abs.toFixed(0);
+}
+
+function buildReportContext(report) {
+  // kept for compatibility but no longer used for API calls
+  return JSON.stringify(report).substring(0, 200);
+}
+
+
+// ═══════════════════════════════════════════════════════
+//  RESET
+// ═══════════════════════════════════════════════════════
+function resetTool() {
+  window.location.reload();
+}
+</script>
+</body>
+</html>

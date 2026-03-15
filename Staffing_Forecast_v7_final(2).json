@@ -1,0 +1,198 @@
+{
+  "name": "Staffing Forecast v7 - Client Bill Role + Consulting Band",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "staffing-forecast-v7",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "e9237450-856d-4017-b533-10a855d7ef75",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        112,
+        -16
+      ],
+      "webhookId": "274fe862-8a8a-4490-aca4-9819ac9e5ea0"
+    },
+    {
+      "parameters": {
+        "jsCode": "function getHeaders(csvText) {\n  if (!csvText) return [];\n  const firstLine = csvText.trim().split('\\n')[0];\n  const headers = [];\n  let inQuote = false, current = '';\n  for (const char of firstLine) {\n    if (char === '\"') { inQuote = !inQuote; }\n    else if (char === ',' && !inQuote) { headers.push(current.trim().replace(/^\"|\"$/g,'')); current = ''; }\n    else { current += char; }\n  }\n  headers.push(current.trim().replace(/^\"|\"$/g,''));\n  return headers;\n}\nfunction getSampleRows(csvText, n) {\n  if (!csvText) return [];\n  return csvText.trim().split('\\n').slice(1, n+1);\n}\n\nconst body            = $input.first().json.body;\nconst staffingHeaders = getHeaders(body.staffing_csv);\nconst rateHeaders     = getHeaders(body.rate_card_csv);\nconst vacationHeaders = getHeaders(body.vacation_csv);\nconst bandHeaders     = getHeaders(body.band_cost_csv);\nconst staffingSample  = getSampleRows(body.staffing_csv, 2);\nconst rateSample      = getSampleRows(body.rate_card_csv, 2);\nconst vacationSample  = getSampleRows(body.vacation_csv, 2);\nconst bandSample      = getSampleRows(body.band_cost_csv, 2);\n\nconst mappingPrompt = `You are a data analyst. Map column headers from uploaded files to standard field names.\\n\\n--- STAFFING FILE ---\\nHeaders: ${JSON.stringify(staffingHeaders)}\\nSample rows:\\n${staffingSample.join('\\n')}\\n\\n--- ROLE RATE CARD FILE (Client Revenue rates) ---\\nHeaders: ${JSON.stringify(rateHeaders)}\\nSample rows:\\n${rateSample.join('\\n')}\\n\\n--- VACATION FILE ---\\nHeaders: ${JSON.stringify(vacationHeaders)}\\nSample rows:\\n${vacationSample.join('\\n')}\\n\\n--- BAND COST CARD FILE (Internal cost rates by band) ---\\nHeaders: ${JSON.stringify(bandHeaders)}\\nSample rows:\\n${bandSample.join('\\n')}\\n\\nMap to these required standard fields:\\n\\nSTAFFING FILE needs:\\n- resource_name: the person full name\\n- client_bill_role: the role used to bill the client (links to Rate Card for REVENUE)\\n- consulting_band_role: the internal consulting band (e.g. Band 6, Band 7) used for COST lookup\\n- start_date: project start date YYYY-MM-DD\\n- end_date: project end date YYYY-MM-DD\\n- work_numbers: WBS or charge codes with optional % allocation\\n- weekly_hours: contracted hours per week (default 40 if not found)\\n\\nROLE RATE CARD FILE needs:\\n- client_bill_role: the role name that matches the staffing client_bill_role\\n- hourly_revenue_rate: the column containing the monetary rate per hour OR per day (pick whichever exists). Return ONLY the exact column header string as it appears in the file. Do NOT compute or divide anything.\\n\\nVACATION FILE needs:\\n- resource_name: person full name\\n- vacation_start: leave start date\\n- vacation_end: leave end date\\n\\nBAND COST CARD FILE needs:\\n- consulting_band_role: the band label that matches staffing consulting_band_role (e.g. Band 6, Band 7)\\n- hourly_cost_rate: the column containing the monetary cost rate per hour OR per day (pick whichever exists). Return ONLY the exact column header string as it appears in the file. Do NOT compute or divide anything.\\n\\nCRITICAL RULES:\\n1. Values must be EXACT column header strings copied verbatim from the Headers lists above.\\n2. Do NOT write expressions, formulas, or calculations (e.g. never write \"Column / 8\").\\n3. If a column is a day rate (e.g. \"Standard Day Rate\"), return that exact name \u2014 the code will handle dividing by 8.\\n4. Return ONLY valid JSON, no markdown, no explanation.\\n\\nReturn exactly this structure:\\n{\\n  \"staffing\": {\\n    \"resource_name\": \"exact col name or null\",\\n    \"client_bill_role\": \"exact col name or null\",\\n    \"consulting_band_role\": \"exact col name or null\",\\n    \"start_date\": \"exact col name or null\",\\n    \"end_date\": \"exact col name or null\",\\n    \"work_numbers\": \"exact col name or null\",\\n    \"weekly_hours\": \"exact col name or 40\"\\n  },\\n  \"rate_card\": {\\n    \"client_bill_role\": \"exact col name or null\",\\n    \"hourly_revenue_rate\": \"exact col name or null\"\\n  },\\n  \"vacation\": {\\n    \"resource_name\": \"exact col name or null\",\\n    \"vacation_start\": \"exact col name or null\",\\n    \"vacation_end\": \"exact col name or null\"\\n  },\\n  \"band_cost\": {\\n    \"consulting_band_role\": \"exact col name or null\",\\n    \"hourly_cost_rate\": \"exact col name or null\"\\n  },\\n  \"confidence\": \"high\",\\n  \"warnings\": []\\n}`;\n\nconst ollamaPayload = {\n  model: \"llama3.1:8b\",\n  prompt: mappingPrompt,\n  stream: false,\n  format: \"json\",\n  options: { temperature: 0.0, num_predict: 512 }\n};\n\nreturn [{ json: { ollamaPayload, originalData: body } }];"
+      },
+      "id": "1d132fc1-38f0-4f90-815c-6ab4c13bff02",
+      "name": "Extract Headers",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.4.44:11434/api/generate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.ollamaPayload) }}\n",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "8eea9f6b-12e8-4e8c-b4e8-389572bc574b",
+      "name": "Ollama - Map Columns",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        512,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input        = $input.first().json;\nconst originalData = $node[\"Extract Headers\"].json.originalData;\nif (input.error) return [{ json: { error: input.error } }];\nconst ollamaRaw = input.response || '';\nlet rawMapping;\ntry {\n  rawMapping = JSON.parse(ollamaRaw.replace(/```json/gi,'').replace(/```/g,'').trim());\n} catch(e) {\n  return [{ json: { error: 'Column mapping failed. Raw: ' + ollamaRaw.substring(0,200) } }];\n}\nconst mapping = {\n  staffing:  rawMapping.staffing  || {},\n  rate_card: rawMapping.rate_card || {},\n  vacation:  rawMapping.vacation  || {},\n  band_cost: rawMapping.band_cost || {}\n};\n// Validate critical staffing fields\nconst critical = ['resource_name','client_bill_role','consulting_band_role','start_date','end_date','work_numbers'];\nconst missing  = critical.filter(f => !mapping.staffing[f]);\nif (missing.length > 0) {\n  return [{ json: { error: `Could not map staffing columns: ${missing.join(', ')}`, mapping } }];\n}\nif (!mapping.rate_card.client_bill_role || !mapping.rate_card.hourly_revenue_rate) {\n  return [{ json: { error: 'Could not find client bill role and revenue rate in Rate Card file.', mapping } }];\n}\nif (!mapping.band_cost.consulting_band_role || !mapping.band_cost.hourly_cost_rate) {\n  return [{ json: { error: 'Could not find consulting band role and cost rate in Band Cost Card file.', mapping } }];\n}\n// Detect day rate columns so Parse & Calculate can divide by 8\nconst revColName = String(mapping.rate_card.hourly_revenue_rate||'').toLowerCase();\nconst costColName = String(mapping.band_cost.hourly_cost_rate||'').toLowerCase();\nmapping.rate_card._revenue_is_day_rate = revColName.includes('day') || revColName.includes('daily');\nmapping.band_cost._cost_is_day_rate = costColName.includes('day') || costColName.includes('daily');\n\nreturn [{ json: { mapping, confidence: rawMapping.confidence||'unknown', warnings: rawMapping.warnings||[], originalData } }];"
+      },
+      "id": "49669e44-3e3c-4934-b5b9-4ecdad473971",
+      "name": "Validate Mapping",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const mapping      = $node[\"Validate Mapping\"].json.mapping || {};\nconst warnings     = $node[\"Validate Mapping\"].json.warnings || [];\nconst originalData = $node[\"Extract Headers\"].json.originalData;\nconst safeMapping  = {\n  staffing:  mapping.staffing  || {},\n  rate_card: mapping.rate_card || {},\n  vacation:  mapping.vacation  || {},\n  band_cost: mapping.band_cost || {}\n};\n\nfunction parseCSV(csvText, colMap) {\n  if (!csvText || !colMap || !Object.keys(colMap).length) return [];\n  const lines = csvText.trim().split('\\n');\n  const rawH  = lines[0].split(',').map(h => h.trim().replace(/^\"|\"$/g,''));\n  const idx   = {};\n  for (const [std, real] of Object.entries(colMap)) {\n    if (!real) continue;\n    const ci = rawH.findIndex(h => h.toLowerCase().trim() === String(real).toLowerCase().trim());\n    idx[std] = ci !== -1 ? { ci } : { dv: String(real) };\n  }\n  return lines.slice(1).filter(l => l.trim()).map(line => {\n    const vals = []; let q = false, cur = '';\n    for (const c of line) {\n      if (c==='\"'){q=!q;}\n      else if(c===','&&!q){vals.push(cur.trim().replace(/^\"|\"$/g,''));cur='';}\n      else{cur+=c;}\n    }\n    vals.push(cur.trim().replace(/^\"|\"$/g,''));\n    const o = {};\n    for (const [std,src] of Object.entries(idx)) {\n      o[std] = 'dv' in src ? src.dv : (vals[src.ci]||'');\n    }\n    return o;\n  });\n}\n\nfunction workDays(s,e,vSet) {\n  const start=new Date(s),end=new Date(e);\n  if(isNaN(start)||isNaN(end)) return 0;\n  let d=0; const cur=new Date(start);\n  while(cur<=end){\n    if(cur.getDay()!==0&&cur.getDay()!==6&&!vSet.has(cur.toISOString().split('T')[0]))d++;\n    cur.setDate(cur.getDate()+1);\n  }\n  return d;\n}\nfunction expandVac(rows) {\n  const m={};\n  for(const r of rows){\n    const n=(r.resource_name||'').trim(); if(!n) continue;\n    if(!m[n]) m[n]=new Set();\n    const s=new Date(r.vacation_start),e=new Date(r.vacation_end);\n    if(isNaN(s)||isNaN(e)) continue;\n    const c=new Date(s);\n    while(c<=e){m[n].add(c.toISOString().split('T')[0]);c.setDate(c.getDate()+1);}\n  }\n  return m;\n}\nfunction months(s,e){\n  const ms=[],end=new Date(e);\n  const c=new Date(new Date(s).getFullYear(),new Date(s).getMonth(),1);\n  if(isNaN(c)||isNaN(end)) return ms;\n  while(c<=end){ms.push(`${c.getFullYear()}-${String(c.getMonth()+1).padStart(2,'0')}`);c.setMonth(c.getMonth()+1);}\n  return ms;\n}\nfunction mDays(mo,ps,pe,vSet){\n  const [y,m]=mo.split('-').map(Number);\n  const s=new Date(y,m-1,1),e=new Date(y,m,0);\n  const es=new Date(Math.max(new Date(ps),s)),ee=new Date(Math.min(new Date(pe),e));\n  if(es>ee) return 0;\n  return workDays(es.toISOString().split('T')[0],ee.toISOString().split('T')[0],vSet);\n}\nfunction parseWBS(s){\n  if(!s) return [];\n  return s.split(',').map(p=>{\n    p=p.trim(); const i=p.indexOf(':');\n    if(i===-1) return {wbs:p,pct:1};\n    return {wbs:p.substring(0,i).trim(),pct:parseFloat(p.substring(i+1).replace('%','').trim())/100};\n  }).filter(a=>a.wbs);\n}\nconst r2=n=>Math.round(n*100)/100;\n\n// Parse all 4 files\nconst staffing = parseCSV(originalData.staffing_csv,  safeMapping.staffing);\nconst rateRows = parseCSV(originalData.rate_card_csv, safeMapping.rate_card);\nconst vacRows  = parseCSV(originalData.vacation_csv,  safeMapping.vacation);\nconst bandRows = parseCSV(originalData.band_cost_csv, safeMapping.band_cost);\n\n// Revenue lookup: client_bill_role -> hourly revenue rate\n// LLM sometimes maps to \"Standard Day Rate / 8\" \u2014 handle both day and hourly\nconst _revColMapped = String(safeMapping.rate_card.hourly_revenue_rate||'').toLowerCase();\nconst _revIsDay = _revColMapped.includes('day') || _revColMapped.includes('/8') || _revColMapped.includes('/ 8');\nconst revenueMap = {};\nfor(const row of rateRows){\n  const role=(row.client_bill_role||'').trim();\n  if(!role) continue;\n  let rate = parseFloat(row.hourly_revenue_rate);\n  if(isNaN(rate)) {\n    // Fallback: scan all numeric columns\n    for(const [k,v] of Object.entries(row)) {\n      const n = parseFloat(v);\n      if(!isNaN(n) && n > 10 && n < 10000 && k !== 'client_bill_role') { rate = n; break; }\n    }\n  }\n  if(_revIsDay && !isNaN(rate)) rate = Math.round(rate/8*100)/100;\n  if(role && !isNaN(rate) && rate > 0) revenueMap[role] = rate;\n}\n\n// Cost lookup: consulting_band_role -> hourly cost rate\n// LLM sometimes maps to \"Daily Cost Rate / 8\" \u2014 handle both day and hourly\nconst _costColMapped = String(safeMapping.band_cost.hourly_cost_rate||'').toLowerCase();\nconst _costIsDay = _costColMapped.includes('day') || _costColMapped.includes('/8') || _costColMapped.includes('/ 8');\nconst costMap = {};\nfor(const row of bandRows){\n  const band=(row.consulting_band_role||'').trim();\n  if(!band) continue;\n  let cost = parseFloat(row.hourly_cost_rate);\n  if(isNaN(cost)) {\n    for(const [k,v] of Object.entries(row)) {\n      const n = parseFloat(v);\n      if(!isNaN(n) && n > 5 && n < 10000 && k !== 'consulting_band_role') { cost = n; break; }\n    }\n  }\n  if(_costIsDay && !isNaN(cost)) cost = Math.round(cost/8*100)/100;\n  if(band && !isNaN(cost) && cost > 0) costMap[band] = cost;\n}\nconst vacMap={}, unmappedRoles=new Set(), unmappedBands=new Set();\nfor(const [n,s] of Object.entries(expandVac(vacRows))) vacMap[n]=s;\n\nconst wbsData={};\n\nfor(const row of staffing){\n  const name         = (row.resource_name||'').trim();\n  const billRole     = (row.client_bill_role||'').trim();\n  const bandRole     = (row.consulting_band_role||'').trim();\n  // Case-insensitive lookup with whitespace normalisation\n  const billRoleKey  = billRole.toLowerCase().replace(/\\s+/g,' ');\n  const bandRoleKey  = bandRole.toLowerCase().replace(/\\s+/g,' ');\n  const revenueRate  = revenueMap[billRole]\n    ?? Object.entries(revenueMap).find(([k])=>k.toLowerCase().replace(/\\s+/g,' ')===billRoleKey)?.[1];\n  const costRate     = costMap[bandRole]\n    ?? Object.entries(costMap).find(([k])=>k.toLowerCase().replace(/\\s+/g,' ')===bandRoleKey)?.[1];\n  const dailyHrs     = (parseFloat(row.weekly_hours)||40)/5;\n  const allocs       = parseWBS(row.work_numbers);\n  const myVac        = vacMap[name]||new Set();\n  const ms           = months(row.start_date, row.end_date);\n\n  if(!name||!row.start_date||!row.end_date) continue;\n  if(revenueRate===undefined) unmappedRoles.add(billRole);\n  if(costRate===undefined)    unmappedBands.add(bandRole);\n\n  for(const a of allocs){\n    if(!a.wbs) continue;\n    if(!wbsData[a.wbs]) wbsData[a.wbs]={work_number:a.wbs,resources:[],monthly_summary:{}};\n\n    const res={\n      name, client_bill_role:billRole, consulting_band_role:bandRole,\n      allocation_pct: Math.round(a.pct*100),\n      revenue_rate:   revenueRate||0,\n      cost_rate:      costRate||0,\n      start_date:     row.start_date,\n      end_date:       row.end_date,\n      vacation_days:  [...myVac].filter(d=>d>=row.start_date&&d<=row.end_date).length,\n      monthly_hours:{}, monthly_revenue:{}, monthly_cost:{}, monthly_margin:{}\n    };\n\n    let totHrs=0,totRev=0,totCost=0;\n    for(const mo of ms){\n      const d   = mDays(mo,row.start_date,row.end_date,myVac);\n      const hrs = Math.round(d*dailyHrs*a.pct*10)/10;\n      const rev = r2(hrs*(revenueRate||0));\n      const cst = r2(hrs*(costRate||0));\n      const mgn = r2(rev-cst);\n      res.monthly_hours[mo]=hrs;\n      res.monthly_revenue[mo]=rev;\n      res.monthly_cost[mo]=cst;\n      res.monthly_margin[mo]=mgn;\n      totHrs+=hrs; totRev+=rev; totCost+=cst;\n      if(!wbsData[a.wbs].monthly_summary[mo])\n        wbsData[a.wbs].monthly_summary[mo]={total_hours:0,total_revenue:0,total_cost:0,total_margin:0};\n      wbsData[a.wbs].monthly_summary[mo].total_hours   +=hrs;\n      wbsData[a.wbs].monthly_summary[mo].total_revenue +=rev;\n      wbsData[a.wbs].monthly_summary[mo].total_cost    +=cst;\n      wbsData[a.wbs].monthly_summary[mo].total_margin  +=r2(rev-cst);\n    }\n    res.total_hours   = Math.round(totHrs*10)/10;\n    res.total_revenue = r2(totRev);\n    res.total_cost    = r2(totCost);\n    res.total_margin  = r2(totRev-totCost);\n    res.margin_pct    = totRev>0 ? Math.round((totRev-totCost)/totRev*1000)/10 : 0;\n    wbsData[a.wbs].resources.push(res);\n  }\n}\n\nfor(const k of Object.keys(wbsData)){\n  const w=wbsData[k];\n  w.grand_total_hours   = Math.round(w.resources.reduce((s,r)=>s+r.total_hours,  0)*10)/10;\n  w.grand_total_revenue = r2(w.resources.reduce((s,r)=>s+r.total_revenue,0));\n  w.grand_total_cost    = r2(w.resources.reduce((s,r)=>s+r.total_cost,   0));\n  w.grand_total_margin  = r2(w.grand_total_revenue-w.grand_total_cost);\n  w.grand_margin_pct    = w.grand_total_revenue>0\n    ? Math.round((w.grand_total_margin/w.grand_total_revenue)*1000)/10 : 0;\n  for(const mo of Object.keys(w.monthly_summary)){\n    const ms=w.monthly_summary[mo];\n    ms.total_hours   = Math.round(ms.total_hours*10)/10;\n    ms.total_revenue = r2(ms.total_revenue);\n    ms.total_cost    = r2(ms.total_cost);\n    ms.total_margin  = r2(ms.total_margin);\n    ms.margin_pct    = ms.total_revenue>0\n      ? Math.round((ms.total_margin/ms.total_revenue)*1000)/10 : 0;\n  }\n}\n\nconst allWarnings=[\n  ...(warnings||[]),\n  ...[...unmappedRoles].map(r=>`No revenue rate for Client Bill Role: \"${r}\"`),\n  ...[...unmappedBands].map(b=>`No cost rate for Consulting Band Role: \"${b}\"`)\n];\n\nreturn [{json:{wbsData, mapping:safeMapping, allWarnings}}];"
+      },
+      "id": "fe98d8bc-d255-483e-bd6e-dad7bd6f1e5f",
+      "name": "Parse & Calculate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const {wbsData, mapping, allWarnings} = $input.first().json;\nconst today = new Date().toISOString().split('T')[0];\nconst r2 = n => Math.round(n*100)/100;\n\nconst workNumbers = Object.values(wbsData).map(wbs => {\n  const monthlySummary = {};\n  for(const [mo,d] of Object.entries(wbs.monthly_summary)){\n    monthlySummary[mo]={\n      hours:       d.total_hours,\n      revenue_usd: d.total_revenue,\n      cost_usd:    d.total_cost,\n      margin_usd:  d.total_margin,\n      margin_pct:  d.margin_pct\n    };\n  }\n  return {\n    work_number:         wbs.work_number,\n    grand_total_hours:   wbs.grand_total_hours,\n    grand_total_revenue: wbs.grand_total_revenue,\n    grand_total_cost:    wbs.grand_total_cost,\n    grand_total_margin:  wbs.grand_total_margin,\n    grand_margin_pct:    wbs.grand_margin_pct,\n    resource_count:      wbs.resources.length,\n    monthly_summary:     monthlySummary,\n    resources: wbs.resources.map(res=>({\n      name:                 res.name,\n      client_bill_role:     res.client_bill_role,\n      consulting_band_role: res.consulting_band_role,\n      allocation_pct:       res.allocation_pct,\n      revenue_rate:         res.revenue_rate,\n      cost_rate:            res.cost_rate,\n      total_hours:          res.total_hours,\n      total_revenue:        res.total_revenue,\n      total_cost:           res.total_cost,\n      total_margin:         res.total_margin,\n      margin_pct:           res.margin_pct,\n      vacation_days:        res.vacation_days,\n      start_date:           res.start_date,\n      end_date:             res.end_date\n    }))\n  };\n});\n\nconst report = {\n  report_date:         today,\n  grand_total_hours:   Math.round(workNumbers.reduce((s,w)=>s+w.grand_total_hours,  0)*10)/10,\n  grand_total_revenue: r2(workNumbers.reduce((s,w)=>s+w.grand_total_revenue,0)),\n  grand_total_cost:    r2(workNumbers.reduce((s,w)=>s+w.grand_total_cost,   0)),\n  grand_total_margin:  r2(workNumbers.reduce((s,w)=>s+w.grand_total_margin, 0)),\n  data_warnings:       allWarnings||[],\n  work_numbers:        workNumbers\n};\nreport.grand_margin_pct = report.grand_total_revenue>0\n  ? Math.round((report.grand_total_margin/report.grand_total_revenue)*1000)/10 : 0;\n\nreturn [{ json: { report, mapping } }];"
+      },
+      "id": "build-report-v7",
+      "name": "Build Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "respond-binary-v7",
+      "name": "Respond with JSON",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1720,
+        -16
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Headers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Headers": {
+      "main": [
+        [
+          {
+            "node": "Ollama - Map Columns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama - Map Columns": {
+      "main": [
+        [
+          {
+            "node": "Validate Mapping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Mapping": {
+      "main": [
+        [
+          {
+            "node": "Parse & Calculate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Calculate": {
+      "main": [
+        [
+          {
+            "node": "Build Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Report": {
+      "main": [
+        [
+          {
+            "node": "Respond with JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "0acc33b6-f3d6-4b69-acff-510db99ca079",
+  "meta": {
+    "instanceId": "02d4a93aa4317d70185e09dc4349f0976d5fa96ed4b2dae20389fdc2c98634fd"
+  },
+  "id": "q4UCTainSDeNvnrd",
+  "tags": []
+}
